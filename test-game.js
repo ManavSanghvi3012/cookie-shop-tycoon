@@ -81,3 +81,66 @@ screen.get('confirm-reset').listeners.click();
 assert.equal(screen.get('variety').value, 'chocolate-chip');
 assert.equal(screen.get('cash').textContent, '$100.00');
 console.log('Variety economics, mixed season, and UI integration checks passed.');
+
+// Satisfaction responds independently to price and unmet demand, and stays bounded.
+assert.equal(initial().satisfaction, 75);
+for (const [id, recipe] of Object.entries(varieties)) {
+  const funded = { ...initial(), cash: 100000 };
+  const fair = play(funded, 1000, recipe.suggestedPrice, 0, fixed, id);
+  const cheap = play(funded, 1000, recipe.suggestedPrice - 25, 0, fixed, id);
+  const expensive = play(funded, 1000, recipe.suggestedPrice * 2, 0, fixed, id);
+  assert.equal(fair.satisfaction, 78);
+  assert.equal(cheap.satisfaction, 83);
+  assert.equal(expensive.satisfaction, 68);
+  const demand = fair.history[0].demand;
+  assert.equal(play(funded, demand, recipe.suggestedPrice, 0, fixed, id).satisfaction, 78);
+  assert.ok(play(funded, demand - 1, recipe.suggestedPrice, 0, fixed, id).satisfaction < 75);
+  assert.equal(play(funded, 0, recipe.suggestedPrice, 0, fixed, id).satisfaction, 55);
+}
+const upper = play({ ...initial(), satisfaction: 99 }, 200, 100, 0, fixed);
+assert.equal(upper.satisfaction, 100);
+assert.equal(upper.history[0].satisfactionChange, 1);
+const lower = play({ ...initial(), satisfaction: 1 }, 0, 400, 0, fixed);
+assert.equal(lower.satisfaction, 0);
+assert.equal(lower.history[0].satisfactionChange, -1);
+const noDemand = play(initial(), 0, 2000, 0, fixed);
+assert.equal(noDemand.history[0].demand, 0);
+assert.equal(noDemand.history[0].inventoryChange, 0);
+assert.equal(noDemand.satisfaction, 65);
+const unchanged = initial();
+play(unchanged, 0, 200, 0, fixed);
+assert.deepEqual(unchanged, initial());
+const { restore } = require('./game.js');
+assert.equal(restore({ cash: 10000, history: [] }).satisfaction, 75);
+assert.deepEqual(restore(mixedSeason), mixedSeason);
+const oldSave = JSON.parse(JSON.stringify(day));
+delete oldSave.satisfaction;
+for (const row of oldSave.history) {
+  for (const key of ['variety', 'satisfaction', 'satisfactionChange', 'priceChange', 'inventoryChange']) delete row[key];
+}
+assert.equal(restore(oldSave).satisfaction, day.satisfaction);
+assert.equal(ui(oldSave).get('satisfaction').textContent, `${day.satisfaction} / 100`);
+assert.equal(ui(saved).get('satisfaction').textContent, `${saved.satisfaction} / 100`);
+assert.match(screen.get('satisfaction').textContent, /^75 \/ 100$/);
+const unhappy = ui();
+unhappy.get('cookies').value = '0';
+unhappy.get('price').value = '4';
+unhappy.get('ads').value = '0';
+unhappy.get('plan').listeners.submit({ preventDefault() {} });
+unhappy.get('skip-customers').listeners.click();
+assert.equal(unhappy.get('satisfaction').textContent, '45 / 100');
+assert.match(unhappy.get('daily-result').innerHTML, /Price: -10 points/);
+assert.match(unhappy.get('daily-result').innerHTML, /Inventory: -20 points/);
+assert.match(unhappy.get('history').innerHTML, /wanted cookies were unavailable/);
+let cappedSeason = initial();
+for (let i = 0; i < 4; i++) cappedSeason = play(cappedSeason, 110, 100, 0, fixed);
+assert.match(ui(cappedSeason).get('daily-result').innerHTML, /100 \(\+1 today\)/);
+assert.match(ui(cappedSeason).get('daily-result').innerHTML, /limited to 0–100/);
+const finalScreen = ui(mixedSeason);
+assert.match(finalScreen.get('daily-result').innerHTML, /Customer satisfaction:/);
+assert.equal(finalScreen.get('open-shop').disabled, true);
+const bankrupt = play({ ...initial(), cash: 35 }, 1, 2000, 0, fixed, 'shortbread');
+assert.match(ui(bankrupt).get('daily-result').innerHTML, /Customer satisfaction:/);
+console.log('Satisfaction pricing, inventory, bounds, migration, persistence, reset, and final-day checks passed.');
+
+assert.equal(play(initial(), 100, 220, 0, fixed).history[0].priceChange, -1);

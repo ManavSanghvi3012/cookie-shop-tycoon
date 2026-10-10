@@ -6,7 +6,25 @@ const Game = (() => {
     'double-chocolate': Object.freeze({ name: 'Double Chocolate', cost: 80, suggestedPrice: 300, appeal: 0.85 })
   });
   const getVariety = id => Object.hasOwn(varieties, id) ? varieties[id] : null;
-  const initial = () => ({ cash: 10000, history: [] });
+  const initial = () => ({ cash: 10000, satisfaction: 75, history: [] });
+  function satisfactionFor(previous, price, suggestedPrice, cookies, demand) {
+    const priceChange = price < suggestedPrice ? 5 : price === suggestedPrice ? 0 : -Math.min(10, Math.ceil(10 * (price - suggestedPrice) / suggestedPrice));
+    const missed = Math.max(0, demand - cookies);
+    const inventoryChange = demand === 0 ? 0 : missed === 0 ? 3 : -Math.ceil(20 * missed / demand);
+    const score = Math.max(0, Math.min(100, previous + priceChange + inventoryChange));
+    return { satisfaction: score, satisfactionChange: score - previous, priceChange, inventoryChange };
+  }
+  // Reconstruct old saves using the recorded demand, without rerolling traffic.
+  function restore(saved) {
+    let satisfaction = 75;
+    const history = saved.history.map(row => {
+      const variety = row.variety || 'chocolate-chip';
+      const feedback = satisfactionFor(satisfaction, row.price, varieties[variety].suggestedPrice, row.cookies, row.demand);
+      satisfaction = feedback.satisfaction;
+      return { ...row, variety, ...feedback };
+    });
+    return { cash: saved.cash, satisfaction, history };
+  }
   function play(state, cookies, price, ads, random = Math.random, variety = 'chocolate-chip') {
     const recipe = getVariety(variety);
     if (!recipe) throw new Error('Choose an available cookie variety.');
@@ -19,10 +37,11 @@ const Game = (() => {
     const traffic = 0.75 + random() * 0.5;
     const demand = Math.max(0, Math.round((55 + 17 * Math.sqrt(ads / 100)) * recipe.appeal * Math.exp(-0.62 * ((price - recipe.suggestedPrice) / 100)) * traffic));
     const sold = Math.min(cookies, demand), revenue = sold * price, profit = revenue - expenses;
-    const row = { variety, unitCost: recipe.cost, day: state.history.length + 1, cookies, price, ads, sold, revenue, expenses, profit, cash: state.cash + profit, demand };
-    return { cash: row.cash, history: [...state.history, row] };
+    const feedback = satisfactionFor(state.satisfaction ?? 75, price, recipe.suggestedPrice, cookies, demand);
+    const row = { ...feedback, variety, unitCost: recipe.cost, day: state.history.length + 1, cookies, price, ads, sold, revenue, expenses, profit, cash: state.cash + profit, demand };
+    return { cash: row.cash, satisfaction: feedback.satisfaction, history: [...state.history, row] };
   }
-  return { initial, play, varieties, getVariety };
+  return { initial, play, varieties, getVariety, restore };
 })();
 if (typeof module !== 'undefined') module.exports = Game;
 if (typeof document !== 'undefined') {
@@ -93,16 +112,26 @@ if (typeof document !== 'undefined') {
     const saved = JSON.parse(localStorage.getItem(storageKey));
     if (saved && Number.isSafeInteger(saved.cash) && saved.cash >= 0 && Array.isArray(saved.history) && saved.history.length <= 30 && saved.history.every((r, i) => ['cookies','price','ads','sold','revenue','expenses','profit','cash','demand'].every(k => Number.isSafeInteger(r[k])) && r.day === i + 1 && r.cash >= 0)) {
       if (saved.history.every(r => r.variety === undefined || Game.getVariety(r.variety))) {
-        state = { ...saved, history: saved.history.map(r => ({ ...r, variety: r.variety || 'chocolate-chip' })) };
+        state = Game.restore(saved);
         const last = state.history.at(-1);
         if (last) { $('variety').value = last.variety; $('price').value = last.price / 100; }
       }
     }
   } catch (_) { /* Saving is optional, including in private browsing. */ }
+  const points = n => `${n > 0 ? '+' : ''}${n}`;
+  function satisfactionReport(r) {
+    const recipe = Game.getVariety(r.variety);
+    const priceReason = r.price < recipe.suggestedPrice ? 'Customers appreciated the bargain price.' : r.price === recipe.suggestedPrice ? 'Your price matched the suggested price.' : 'Customers felt the price was high for this variety.';
+    const missed = Math.max(0, r.demand - r.cookies);
+    const inventoryReason = r.demand === 0 ? 'No customers wanted cookies today; inventory had no effect.' : missed ? `${missed} of ${r.demand} wanted cookies were unavailable.` : `You met all demand for ${r.demand} cookies.`;
+    const limited = r.satisfactionChange !== r.priceChange + r.inventoryChange ? ' The score is limited to 0–100.' : '';
+    return `<div class="satisfaction-report"><h3>Customer satisfaction: ${r.satisfaction} / 100 (${points(r.satisfactionChange)} today)</h3><p>Price: ${points(r.priceChange)} points. ${priceReason}</p><p>Inventory: ${points(r.inventoryChange)} points. ${inventoryReason}${limited}</p></div>`;
+  }
   function render() {
     const days = state.history.length, done = days === 30 || state.cash < 35;
     const profit = state.cash - 10000;
     $('cash').textContent = money(state.cash);
+    $('satisfaction').textContent = `${state.satisfaction} / 100`;
     $('day').innerHTML = `${Math.min(days + 1, 30)} <small>/ 30</small>`;
     $('total-profit').textContent = money(profit);
     $('total-profit').className = profit < 0 ? 'negative' : '';
@@ -113,13 +142,14 @@ if (typeof document !== 'undefined') {
     $('open-shop').innerHTML = done ? 'Start over to play again' : 'Open the shop <span>↗</span>';
     $('journal-count').textContent = `${days} ${days === 1 ? 'day' : 'days'} in the books`;
     $('empty-journal').hidden = days > 0; $('table-wrap').hidden = days === 0;
-    $('history').innerHTML = [...state.history].reverse().map(r => `<tr><td>${r.day}</td><td>${r.cookies} / ${r.sold}<small class="ledger-variety">${Game.getVariety(r.variety || 'chocolate-chip').name}</small></td><td>${money(r.revenue)}</td><td>${money(r.expenses)}</td><td class="${r.profit < 0 ? 'negative' : 'positive'}">${money(r.profit)}</td><td>${money(r.cash)}</td></tr>`).join('');
+    $('history').innerHTML = [...state.history].reverse().map(r => `<tr><td>${r.day}</td><td>${r.cookies} / ${r.sold}<small class="ledger-variety">${Game.getVariety(r.variety || 'chocolate-chip').name}</small></td><td>${money(r.revenue)}</td><td>${money(r.expenses)}</td><td class="${r.profit < 0 ? 'negative' : 'positive'}">${money(r.profit)}</td><td>${money(r.cash)}</td><td>${satisfactionReport(r)}</td></tr>`).join('');
     $('welcome').hidden = days > 0 || done;
     $('daily-result').hidden = days === 0 && !done;
     if (days || done) {
       const r = state.history[days - 1];
       $('result-label').textContent = done ? 'YOUR SHOP · THE FINAL CRUMB' : `DAY ${days} · IN THE BOOKS`;
       $('daily-result').innerHTML = done ? `<h2 class="result-title">${state.cash < 35 ? 'The oven has cooled.' : profit > 0 ? 'One sweet month.' : 'A month of lessons.'}</h2><p class="result-description">${state.cash < 35 ? 'You have less than $0.35 left, so you can’t bake another cookie.' : 'Thirty days of baking, learning, and building your little shop.'}</p><div class="result-profit ${profit < 0 ? 'negative' : 'positive'}">${money(state.cash)}</div><span class="profit-caption">FINAL SHOP CASH</span><div class="receipt"><div><span>Days in business</span><strong>${days} / 30</strong></div><div><span>Total revenue</span><strong>${money(state.history.reduce((n, x) => n + x.revenue, 0))}</strong></div><div><span>Total expenses</span><strong>${money(state.history.reduce((n, x) => n + x.expenses, 0))}</strong></div><div><span>Total profit</span><strong>${money(profit)}</strong></div><div><span>Last day’s sales / profit</span><strong>${r.sold} cookies / ${money(r.profit)}</strong></div></div><p class="result-note">Your full daily results are in the shop journal. Try another season and see how far your dough can go.</p>` : `<h2 class="result-title">${r.sold === 0 ? 'A quiet day at the shop.' : r.profit >= 0 ? 'A little sweeter today.' : 'Some days need more dough.'}</h2><p class="result-description">${r.sold} of ${r.cookies} fresh ${Game.getVariety(r.variety || 'chocolate-chip').name} cookies found a happy home.</p><div class="result-profit ${r.profit < 0 ? 'negative' : 'positive'}">${money(r.profit)}</div><span class="profit-caption">TODAY’S PROFIT</span><div class="receipt"><div><span>Cookies sold</span><strong>${r.sold} / ${r.cookies}</strong></div><div><span>Revenue</span><strong>${money(r.revenue)}</strong></div><div><span>Baking + advertising</span><strong>${money(r.expenses)}</strong></div><div><span>Remaining cash</span><strong>${money(r.cash)}</strong></div></div><p class="result-note">${r.cookies === 0 ? 'No cookies baked today. Set a batch size to start selling.' : r.sold < r.cookies ? `${r.cookies - r.sold} unsold cookies were donated. Try a smaller batch, a lower price, or more advertising.` : 'Sold out! A larger batch could serve more customers tomorrow.'}</p><div class="progress" aria-label="${days} of 30 days complete"><div style="width:${days / 30 * 100}%"></div></div>`;
+      if (r) $('daily-result').innerHTML += satisfactionReport(r);
     }
     updateCost();
   }

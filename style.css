@@ -9,3 +9,5 @@
 #variety:disabled { opacity:.6; }
 .variety-note { font-size:12px; line-height:1.5; margin:8px 0 0; }
 .ledger-variety { display:block; font-size:11px; color:#777; margin-top:4px; white-space:normal; }
+
+.stats{grid-template-columns:repeat(5,minmax(0,1fr))}.stats>div{padding:0 16px}.satisfaction-report{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}.satisfaction-report h3{font-size:14px;margin:0 0 8px}.satisfaction-report p{font-size:12px;margin:4px 0}.ledger .satisfaction-report{min-width:230px;max-width:300px;margin:0;border:0;padding:0;white-space:normal;text-align:left}@media(max-width:800px){.stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.stats>div{border:0}.stats>div:last-child{grid-column:1 / -1}}
